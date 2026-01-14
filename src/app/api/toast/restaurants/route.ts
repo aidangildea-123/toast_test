@@ -6,9 +6,7 @@ export async function GET() {
     const host = process.env.TOAST_HOSTNAME!;
     const token = await getToastAccessToken();
 
-    // TODO: Replace this path with the specific endpoint you have access to.
-    // Toast has multiple API families; the "right" restaurants/locations endpoint depends on your program/scopes.
-    const res = await fetch(`https://${host}/YOUR_RESTAURANTS_ENDPOINT_HERE`, {
+    const res = await fetch(`https://${host}/restaurants/v1/restaurants`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -17,13 +15,21 @@ export async function GET() {
 
     if (!res.ok) {
       return NextResponse.json(
-        { error: "Toast API call failed", status: res.status, detail: await res.text() },
+        {
+          error: "Restaurants request failed",
+          status: res.status,
+          detail: await res.text(),
+        },
         { status: 500 }
       );
     }
 
-    return NextResponse.json(await res.json());
+    const data = await res.json();
+    return NextResponse.json(data);
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Unknown server error" },
+      { status: 500 }
+    );
   }
 }
