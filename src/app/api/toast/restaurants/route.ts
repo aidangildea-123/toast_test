@@ -8,38 +8,27 @@ export async function GET() {
     const token = await getToastAccessToken();
 
     if (!restaurantGuid) {
-      return NextResponse.json(
-        { error: "Missing TOAST_RESTAURANT_GUID" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Missing TOAST_RESTAURANT_GUID" }, { status: 500 });
     }
 
-    const res = await fetch(
-      `https://${host}/restaurants/v1/restaurants/${restaurantGuid}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        cache: "no-store",
-      }
-    );
+    // Restaurants API: get restaurant by GUID
+    const res = await fetch(`https://${host}/restaurants/v1/restaurants/${restaurantGuid}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Toast-Restaurant-External-ID": restaurantGuid,
+      },
+      cache: "no-store",
+    });
 
     if (!res.ok) {
       return NextResponse.json(
-        {
-          error: "Restaurant lookup failed",
-          status: res.status,
-          detail: await res.text(),
-        },
+        { error: "Restaurant lookup failed", status: res.status, detail: await res.text() },
         { status: 500 }
       );
     }
 
     return NextResponse.json(await res.json());
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Unknown server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message ?? "Unknown server error" }, { status: 500 });
   }
 }
