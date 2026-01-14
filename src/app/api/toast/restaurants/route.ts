@@ -27,7 +27,8 @@ export async function GET() {
       );
     }
 
-    return NextResponse.json(await res.json());
+    const restaurant = await res.json();
+    return NextResponse.json({ restaurants: Array.isArray(restaurant) ? restaurant : [restaurant] });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Unknown server error" }, { status: 500 });
   }
