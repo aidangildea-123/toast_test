@@ -85,6 +85,13 @@ function computeCheckMetrics(check: any) {
   const tax =
     typeof check?.taxAmount === "number" ? check.taxAmount : Number(check?.taxAmount ?? 0);
 
+   // ✅ Discounts (check-level)
+   const appliedDiscounts = Array.isArray(check?.appliedDiscounts) ? check.appliedDiscounts : [];
+   const discountAmount = appliedDiscounts.reduce((sum: number, d: any) => {
+     const amt = typeof d?.discountAmount === "number" ? d.discountAmount : Number(d?.discountAmount ?? 0);
+     return sum + (Number.isFinite(amt) ? amt : 0);
+   }, 0);
+
   // Helpful stats
   const paymentCount = payments.length;
   const capturedPaymentCount = capturedPayments.length;
@@ -95,7 +102,8 @@ function computeCheckMetrics(check: any) {
     grossSales,
     netSales: Number.isFinite(netSales) ? netSales : 0,
     tax: Number.isFinite(tax) ? tax : 0,
-    discountTotal,
+    discountAmount,
+    discountCount: appliedDiscounts.length,
     paymentCount,
     capturedPaymentCount,
   };
@@ -111,7 +119,8 @@ function extractCheckRowsFromOrders(orders: any[], targetBusinessDate: number) {
     checkDisplayNumber: string | number | null;
     grossSales: number;
     netSales: number;
-    discountTotal: number;
+    discountAmount: number;
+    discountCount: number;
     tax: number;
     paymentCount: number;
     capturedPaymentCount: number;
@@ -142,7 +151,8 @@ function extractCheckRowsFromOrders(orders: any[], targetBusinessDate: number) {
         grossSales: m.grossSales,
         netSales: m.netSales,
         tax: m.tax,
-        discountTotal: m.discountTotal,
+        discountAmount: m.discountAmount,
+        discountCount: m.discountCount,
         paymentCount: m.paymentCount,
         capturedPaymentCount: m.capturedPaymentCount,
       });

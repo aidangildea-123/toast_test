@@ -117,7 +117,7 @@ export async function GET(req: Request) {
     const startDateRaw = url.searchParams.get("startDate");
     const endDateRaw = url.searchParams.get("endDate");
     const page = Number(url.searchParams.get("page") ?? "1");
-    const pageSize = Number(url.searchParams.get("pageSize") ?? "10");
+    const pageSize = Number(url.searchParams.get("pageSize") ?? "50");
     const debug = url.searchParams.get("debug") === "1";
 
     if (!restaurantGuid) {
