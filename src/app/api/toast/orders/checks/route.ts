@@ -2,10 +2,7 @@
 import { NextResponse } from "next/server";
 import { getToastAccessToken } from "@/lib/toastAuth";
 
-/**
- * Toast wants: yyyy-MM-dd'T'HH:mm:ss.SSSZ (e.g. 2016-01-01T14:13:12.000+0400)
- * We accept Z (+00:00) and normalize.
- */
+
 function normalizeToastDate(input: string) {
   // If "+" became a space in a query string: "...000 0000" -> "...000+0000"
   input = input.replace(/(\.\d{3}) (\d{4})$/, "$1+$2");
@@ -42,7 +39,40 @@ function extractOrders(toastJson: any): any[] {
  * - netSales: check.amount
  * - tax: check.taxAmount
  */
+
+function sumDiscountsFromDiscountObjects(discounts: any[]): number {
+    if (!Array.isArray(discounts)) return 0;
+  
+    return discounts.reduce((sum: number, d: any) => {
+      // common fields you might see
+      const raw =
+        d?.discountAmount ??
+        d?.amount ??
+        d?.appliedDiscountAmount ??
+        0;
+  
+      const amt = typeof raw === "number" ? raw : Number(raw ?? 0);
+      return sum + (Number.isFinite(amt) ? amt : 0);
+    }, 0);
+  }
+  
+  function computeDiscountTotal(check: any): number {
+    let total = 0;
+  
+    // check-level
+    total += sumDiscountsFromDiscountObjects(check?.appliedDiscounts);
+  
+    // item/selection-level (most likely)
+    const selections = Array.isArray(check?.selections) ? check.selections : [];
+    for (const s of selections) {
+      total += sumDiscountsFromDiscountObjects(s?.appliedDiscounts);
+    }
+  
+    return total;
+  }
+  
 function computeCheckMetrics(check: any) {
+      
   const payments = Array.isArray(check?.payments) ? check.payments : [];
   const capturedPayments = payments.filter((p: any) => p?.paymentStatus === "CAPTURED");
 
@@ -59,10 +89,13 @@ function computeCheckMetrics(check: any) {
   const paymentCount = payments.length;
   const capturedPaymentCount = capturedPayments.length;
 
+  const discountTotal = computeDiscountTotal(check);
+
   return {
     grossSales,
     netSales: Number.isFinite(netSales) ? netSales : 0,
     tax: Number.isFinite(tax) ? tax : 0,
+    discountTotal,
     paymentCount,
     capturedPaymentCount,
   };
@@ -78,6 +111,7 @@ function extractCheckRowsFromOrders(orders: any[], targetBusinessDate: number) {
     checkDisplayNumber: string | number | null;
     grossSales: number;
     netSales: number;
+    discountTotal: number;
     tax: number;
     paymentCount: number;
     capturedPaymentCount: number;
@@ -108,6 +142,7 @@ function extractCheckRowsFromOrders(orders: any[], targetBusinessDate: number) {
         grossSales: m.grossSales,
         netSales: m.netSales,
         tax: m.tax,
+        discountTotal: m.discountTotal,
         paymentCount: m.paymentCount,
         capturedPaymentCount: m.capturedPaymentCount,
       });

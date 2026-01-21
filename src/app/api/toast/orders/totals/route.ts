@@ -1,109 +1,47 @@
-// src/app/api/toast/orders/totals/route.ts
+// src/app/api/toast/orders/totals-by-checks/route.ts
 import { NextResponse } from "next/server";
 import { getToastAccessToken } from "@/lib/toastAuth";
 
-/**
- * Toast wants: yyyy-MM-dd'T'HH:mm:ss.SSSZ (e.g. 2016-01-01T14:13:12.000+0400)
- * We accept Z (+00:00) and normalize.
- */
+// ✅ Keep this as manual input
+const targetBusinessDate = 20260109;
+
+/** Toast wants: yyyy-MM-dd'T'HH:mm:ss.SSSZ (e.g. 2016-01-01T14:13:12.000+0400) */
 function normalizeToastDate(input: string) {
-  // If "+" became a space in a query string: "...000 0000" -> "...000+0000"
-  input = input.replace(/(\.\d{3}) (\d{4})$/, "$1+$2");
-
-  // ...Z -> ...+0000
-  if (input.endsWith("Z")) return input.replace(/Z$/, "+0000");
-
-  // ...+00:00 -> ...+0000
-  input = input.replace(/([+-]\d{2}):(\d{2})$/, "$1$2");
-
-  return input;
+  input = input.replace(/(\.\d{3}) (\d{4})$/, "$1+$2"); // "...000 0000" -> "...000+0000"
+  if (input.endsWith("Z")) return input.replace(/Z$/, "+0000"); // Z -> +0000
+  return input.replace(/([+-]\d{2}):(\d{2})$/, "$1$2"); // +00:00 -> +0000
 }
 
-/**
- * Derive Toast businessDate integer (YYYYMMDD) from an ISO-like input.
- * Example: "2026-01-08T00:00:00.000Z" -> 20260108
- *
- * IMPORTANT: This uses the literal YYYY-MM-DD portion of the string.
- * If you want restaurant-timezone-safe behavior, pass a date=YYYY-MM-DD
- * and build businessDate from that instead.
- */
-function toBusinessDateIntFromStartDate(startDateRaw: string): number {
-  const ymd = startDateRaw.slice(0, 10); // "YYYY-MM-DD"
-  const yyyymmdd = ymd.replaceAll("-", ""); // "YYYYMMDD"
-  const n = Number(yyyymmdd);
-  return Number.isFinite(n) ? n : NaN;
-}
-
-/**
- * Try to extract an "orders array" from whatever shape Toast returns.
- */
 function extractOrders(toastJson: any): any[] {
   if (!toastJson) return [];
   if (Array.isArray(toastJson.orders)) return toastJson.orders;
-  if (Array.isArray(toastJson.orderIds)) return toastJson.orderIds; // sometimes full objects, sometimes IDs
+  if (Array.isArray(toastJson.orderIds)) return toastJson.orderIds;
   if (Array.isArray(toastJson)) return toastJson;
   if (toastJson.data && Array.isArray(toastJson.data.orders)) return toastJson.data.orders;
   return [];
 }
 
-/**
- * Adds sums across orders/checks/payments (based on your sample payload).
- * - grossSales: sum CAPTURED payment.amount
- * - netSales: sum check.amount
- * - tax: sum check.taxAmount
- */
-function sumTotalsFromOrders(orders: any[]) {
-  let totalGrossSales = 0;
-  let totalNetSales = 0;
-  let totalTax = 0;
+function computeCheckMetrics(check: any) {
+  const payments = Array.isArray(check?.payments) ? check.payments : [];
+  const captured = payments.filter((p: any) => p?.paymentStatus === "CAPTURED");
 
-  let orderCount = 0;
-  let checkCount = 0;
-  let capturedPaymentCount = 0;
+  const grossSales = captured.reduce((sum: number, p: any) => {
+    const amt = typeof p?.amount === "number" ? p.amount : Number(p?.amount ?? 0);
+    return sum + (Number.isFinite(amt) ? amt : 0);
+  }, 0);
 
-  for (const order of orders) {
-    if (!order || typeof order !== "object") continue; // skip strings/ids
-
-    orderCount += 1;
-
-    const checks = Array.isArray(order.checks) ? order.checks : [];
-    for (const check of checks) {
-      if (!check || typeof check !== "object") continue;
-      checkCount += 1;
-
-      const net = typeof check.amount === "number" ? check.amount : Number(check.amount ?? 0);
-      if (Number.isFinite(net)) totalNetSales += net;
-
-      const tax =
-        typeof check.taxAmount === "number" ? check.taxAmount : Number(check.taxAmount ?? 0);
-      if (Number.isFinite(tax)) totalTax += tax;
-
-      const payments = Array.isArray(check.payments) ? check.payments : [];
-      for (const p of payments) {
-        if (!p || typeof p !== "object") continue;
-        if (p.paymentStatus === "CAPTURED") {
-          capturedPaymentCount += 1;
-          const amt = typeof p.amount === "number" ? p.amount : Number(p.amount ?? 0);
-          if (Number.isFinite(amt)) totalGrossSales += amt;
-        }
-      }
-    }
-  }
+  const net = typeof check?.amount === "number" ? check.amount : Number(check?.amount ?? 0);
+  const tax = typeof check?.taxAmount === "number" ? check.taxAmount : Number(check?.taxAmount ?? 0);
 
   return {
-    totalGrossSales,
-    totalNetSales,
-    totalTax,
-    orderCount,
-    checkCount,
-    capturedPaymentCount,
+    grossSales,
+    netSales: Number.isFinite(net) ? net : 0,
+    tax: Number.isFinite(tax) ? tax : 0,
+    paymentCount: payments.length,
+    capturedPaymentCount: captured.length,
   };
 }
 
-/**
- * Fetch ONE page from Toast.
- * NOTE: If Toast returns only IDs (strings), we cannot sum totals without a 2nd details call.
- */
 async function fetchOrdersBulkPage(opts: {
   host: string;
   token: string;
@@ -132,7 +70,6 @@ async function fetchOrdersBulkPage(opts: {
   });
 
   const rawText = await res.text();
-
   let json: any;
   try {
     json = rawText ? JSON.parse(rawText) : null;
@@ -144,15 +81,15 @@ async function fetchOrdersBulkPage(opts: {
 }
 
 /**
- * GET /api/toast/orders/totals
+ * GET /api/toast/orders/totals-by-checks
  *
  * Query:
  * - startDate (required) e.g. 2026-01-09T00:00:00.000Z
  * - endDate   (required) e.g. 2026-01-10T00:00:00.000Z
- * - pageSize  (optional) default 100 (Toast may cap; 100 is a safe start)
- * - maxPages  (optional) default 50 (safety cap)
+ * - pageSize  (optional) default 100
+ * - maxPages  (optional) default 50
  * - restaurantGuid (optional override; else TOAST_RESTAURANT_GUID)
- * - debug=1 (optional; includes pagination + businessDate stats)
+ * - debug=1 (optional)
  */
 export async function GET(req: Request) {
   try {
@@ -180,41 +117,30 @@ export async function GET(req: Request) {
     const maxPages = Number(url.searchParams.get("maxPages") ?? "50");
     const debug = url.searchParams.get("debug") === "1";
 
-    // This is the *target business day* we want to sum
-    const targetBusinessDate = 20260109;
-    if (!Number.isFinite(targetBusinessDate)) {
-      return NextResponse.json(
-        { error: "Could not derive target businessDate from startDate", startDate: startDateRaw },
-        { status: 400 }
-      );
-    }
-
-    // These are what we send to Toast for the modified-date query window
     const startDate = normalizeToastDate(startDateRaw);
     const endDate = normalizeToastDate(endDateRaw);
 
     const token = await getToastAccessToken();
 
-    // Running totals across ALL pages (but only for target businessDate)
+    // Running totals (streaming, no big arrays)
     let totals = {
       totalGrossSales: 0,
       totalNetSales: 0,
       totalTax: 0,
-      orderCount: 0,
       checkCount: 0,
-      capturedPaymentCount: 0,
+      paymentCountTotal: 0,
+      capturedPaymentCountTotal: 0,
     };
 
-    // Pagination stats
+    // Debug stats
     let pagesFetched = 0;
     let lastPageOrderCount = 0;
     let idsOnlyDetected = false;
-
-    // BusinessDate stats (debug)
     let totalOrdersSeen = 0;
     let totalOrdersMatchedBusinessDate = 0;
+    let totalChecksEvaluated = 0;
+    let totalChecksIncluded = 0; // paymentCount > 0
 
-    // We stop when a page returns 0 orders (or hits maxPages)
     for (let page = 1; page <= maxPages; page++) {
       const { res, json } = await fetchOrdersBulkPage({
         host,
@@ -228,13 +154,7 @@ export async function GET(req: Request) {
 
       if (!res.ok) {
         return NextResponse.json(
-          {
-            error: "Toast ordersBulk failed",
-            status: res.status,
-            detail: json,
-            page,
-            targetBusinessDate,
-          },
+          { error: "Toast ordersBulk failed", status: res.status, detail: json, page, targetBusinessDate },
           { status: res.status }
         );
       }
@@ -243,7 +163,6 @@ export async function GET(req: Request) {
       pagesFetched += 1;
       lastPageOrderCount = orders.length;
 
-      // If this endpoint returns only IDs, we cannot sum without calling order-details.
       const containsOnlyIds = orders.length > 0 && orders.every((x) => typeof x === "string");
       if (containsOnlyIds) {
         idsOnlyDetected = true;
@@ -256,56 +175,49 @@ export async function GET(req: Request) {
             pageSize,
             page,
             sampleIds: orders.slice(0, 10),
-            nextStep:
-              "We need a second step: fetch order details for these IDs (ideally with a bulk details endpoint if available) and then sum totals.",
           },
           { status: 200 }
         );
       }
 
-      // If no orders came back, we're done (this means previous page was the last real page).
       if (orders.length === 0) break;
 
-      // Count total orders seen (objects only)
       const orderObjects = orders.filter((o) => o && typeof o === "object");
       totalOrdersSeen += orderObjects.length;
 
-      // ✅ Filter to ONLY orders whose businessDate == targetBusinessDate
-      const ordersForDay = orderObjects.filter(
-        (o: any) => Number(o?.businessDate) === targetBusinessDate
-      );
-      totalOrdersMatchedBusinessDate += ordersForDay.length;
+      for (const order of orderObjects) {
+        const bd = Number(order?.businessDate);
+        if (!Number.isFinite(bd) || bd !== targetBusinessDate) continue;
+        totalOrdersMatchedBusinessDate += 1;
 
-      // ✅ Add ONLY this day’s totals into our running totals.
-      const pageTotals = sumTotalsFromOrders(ordersForDay);
-      totals = {
-        totalGrossSales: totals.totalGrossSales + pageTotals.totalGrossSales,
-        totalNetSales: totals.totalNetSales + pageTotals.totalNetSales,
-        totalTax: totals.totalTax + pageTotals.totalTax,
-        orderCount: totals.orderCount + pageTotals.orderCount,
-        checkCount: totals.checkCount + pageTotals.checkCount,
-        capturedPaymentCount: totals.capturedPaymentCount + pageTotals.capturedPaymentCount,
-      };
+        const checks = Array.isArray(order?.checks) ? order.checks : [];
+        for (const check of checks) {
+          if (!check || typeof check !== "object") continue;
 
-      // Optional heuristic: if short page, next request likely returns empty and will break
-      if (orders.length < pageSize) {
-        // do nothing; next iteration confirms
+          totalChecksEvaluated += 1;
+          const m = computeCheckMetrics(check);
+
+          // ✅ your rule: only include checks where paymentCount > 0
+          if (m.paymentCount <= 0) continue;
+
+          totalChecksIncluded += 1;
+
+          totals.totalGrossSales += m.grossSales;
+          totals.totalNetSales += m.netSales;
+          totals.totalTax += m.tax;
+          totals.checkCount += 1;
+          totals.paymentCountTotal += m.paymentCount;
+          totals.capturedPaymentCountTotal += m.capturedPaymentCount;
+        }
       }
     }
 
     const response = {
-      // what you requested
       startDate: startDateRaw,
       endDate: endDateRaw,
-
-      // what we used for filtering
       targetBusinessDate,
-
-      // what we sent to Toast (modified-date window)
       normalizedStartDate: startDate,
       normalizedEndDate: endDate,
-
-      // totals across ALL pages fetched (ONLY for targetBusinessDate)
       ...totals,
     };
 
@@ -313,21 +225,13 @@ export async function GET(req: Request) {
       return NextResponse.json(
         {
           ...response,
-          pagination: {
-            pageSize,
-            maxPages,
-            pagesFetched,
-            lastPageOrderCount,
-            idsOnlyDetected,
-            note:
-              "We stop after an empty page OR when maxPages is reached. If you suspect more data, raise maxPages.",
-          },
-          businessDateFiltering: {
+          pagination: { pageSize, maxPages, pagesFetched, lastPageOrderCount, idsOnlyDetected },
+          filtering: {
             totalOrdersSeen,
             totalOrdersMatchedBusinessDate,
-            totalOrdersFilteredOut: totalOrdersSeen - totalOrdersMatchedBusinessDate,
-            note:
-              "We fetch by modification date (start/end), then only sum orders where order.businessDate == targetBusinessDate.",
+            totalChecksEvaluated,
+            totalChecksIncluded,
+            totalChecksFilteredOut: totalChecksEvaluated - totalChecksIncluded,
           },
         },
         { status: 200 }
