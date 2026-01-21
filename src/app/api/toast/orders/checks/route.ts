@@ -23,12 +23,6 @@ function normalizeToastDate(input: string) {
  * Derive Toast businessDate integer (YYYYMMDD) from an ISO-like input.
  * Example: "2026-01-08T00:00:00.000Z" -> 20260108
  */
-function toBusinessDateIntFromStartDate(startDateRaw: string): number {
-  const ymd = startDateRaw.slice(0, 10); // "YYYY-MM-DD"
-  const yyyymmdd = ymd.replaceAll("-", "");
-  const n = Number(yyyymmdd);
-  return Number.isFinite(n) ? n : NaN;
-}
 
 /**
  * Try to extract an "orders array" from whatever shape Toast returns.
@@ -93,8 +87,7 @@ function extractCheckRowsFromOrders(orders: any[], targetBusinessDate: number) {
     if (!order || typeof order !== "object") continue;
 
     const bd = Number(order?.businessDate);
-    const pc = Number(order?.paymentCount);
-    if (!Number.isFinite(bd) || bd !== targetBusinessDate || pc == 0) continue;
+    if (!Number.isFinite(bd) || bd !== targetBusinessDate) continue;
 
     const checks = Array.isArray(order?.checks) ? order.checks : [];
     for (const check of checks) {
@@ -102,11 +95,15 @@ function extractCheckRowsFromOrders(orders: any[], targetBusinessDate: number) {
 
       const m = computeCheckMetrics(check);
 
+       // ✅ FILTER HERE
+       if (m.paymentCount <= 0) continue;
+
       rows.push({
         businessDate: Number.isFinite(bd) ? bd : null,
         orderDisplayNumber: order?.displayNumber ?? null,
 
         // These fields may/may not exist in your payload; kept as optional for debugging/traceability
+
         checkDisplayNumber: check?.displayNumber ?? null,
         grossSales: m.grossSales,
         netSales: m.netSales,
@@ -275,7 +272,7 @@ export async function GET(req: Request) {
       totalOrdersSeen += orderObjects.length;
 
       const matched = orderObjects.filter(
-        (o) => Number(o?.businessDate) === targetBusinessDate && Number(o?.paymentCount ?? 0) !== 0
+        (o) => Number(o?.businessDate) === targetBusinessDate
       );
       totalOrdersMatchedBusinessDate += matched.length;
 
